@@ -1,0 +1,26 @@
+library(shiny)
+ui <- fluidPage(
+  titlePanel("NBP Monthly Abundance Index"),
+  sidebarLayout(
+    sidebarPanel(
+      selectInput("species","Species:",levels(factor(df$Species)),multiple=T),
+      selectInput("park","Park:",levels(factor(df$Site)),multiple=T)
+    ),
+  mainPanel(
+    plotOutput("plot1")
+  )
+  )
+)
+
+
+server <- function(input,output,session){
+ plot.data <- reactive({
+   getMonthlySpeciesData(species=input$species,parks=input$park)
+ })
+ output$plot1 <- renderPlot({
+   plotSpeciesMonths(plot.data())
+ })
+}
+
+shinyApp(ui=ui,server=server)
+
