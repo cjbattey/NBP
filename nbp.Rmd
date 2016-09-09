@@ -1,0 +1,135 @@
+#Seattle Audubon Society Neighborhood Bird Project
+###Round 2
+
+CJ Battey
+
+##Getting Started
+Load useful packages, read in the survey data, and remove any records with unidentified species. Add columns for total oberved per species/survey. Create a unique survey ID for each combination of site x loop x date. 
+```{r}
+library(plyr);library(dplyr);library(magrittr);library(ggplot2);library(raster);library(data.table);library(viridis)
+
+df <- fread("~/Documents/NBP/Data/NBP Database Export_2014-05-15.csv",stringsAsFactors = T) %>% 
+  data.frame() %>% 
+  subset(!grepl("sp.",df$Species))
+df$Survey.Date <- as.Date(as.character(df$Survey.Date),"%Y-%m-%d")
+df$total <- apply(df[,c("Seen","Heard","Fly","Nest")],1,function(e) sum(e))
+df$surveyID <- paste(df$Site,df$Loop,df$Station,df$Survey.Date)
+length(unique(df$surveyID)) #about 20k point counts
+```
+
+#Temporal Trends in Species Diversity
+```{r}
+#monthly species 
+monthly.species <- ddply(df,.(Site,Month),summarize,n=nlevels(factor(Species)))
+
+ggplot(monthly.species,aes(x=Month,y=n,col=Site))+facet_wrap(~Site)+
+  theme(legend.position="none")+scale_x_continuous(breaks=c(seq(0,12,1)))+
+  geom_point()+geom_smooth()
+
+#summarize species richness by year
+annual.species <- ddply(df,.(Site,Year),summarize,
+                        nspecies=nlevels(factor(Species)),
+                        nsurveys=length(unique(surveyID)),
+                        sp.per.survey=nspecies/nsurveys)
+
+#find significant fits
+sig.fits <- c()
+for(i in levels(factor(annual.species$Site))){
+  site <- subset(annual.species,Site==i)
+  site <- site[site$nsurveys >= (mean(site$nsurveys) - sd(site$nsurveys)),]
+  p <- lm(site$nspecies ~ site$Year) %>% summary()  %>% coef() %>% .[2,4]
+  print(p)
+  if(p<=0.05){
+    sig.fits <- append(sig.fits,site$Site[1])
+  }
+}
+
+ggplot(annual.species,aes(x=Year,y=nspecies,col=Site))+facet_wrap(~Site)+
+  theme(legend.position="none")+ylab("Number of Species")+scale_x_continuous(breaks=seq(1997,2015,5))+
+  geom_point()
+
+annual.surveys <- ddply(df,.(Site,Year),summarize,nsurveys=length(unique(surveyID)))
+ggplot(annual.surveys,aes(x=Year,y=nsurveys,col=Site))+facet_wrap(~Site)+
+  theme(legend.position="none")+
+  geom_point()+geom_smooth()
+```
+
+
+##Species Trends Across Years
+
+```{r}
+species <- ddply(df,.(Site,Year,Species),summarize,total=sum(total)) #get annual totals by species for each park
+species <- join(species,annual.surveys,by=c("Site","Year"),type="left") #add number of surveys per year
+species$freq <- species$total/species$nsurveys #get frequency of reports
+
+sig.fits <- c()
+for(i in levels(factor(annual.species$Site))){
+  site <- subset(annual.species,Site==i)
+  site <- site[site$nsurveys >= (mean(site$nsurveys) - sd(site$nsurveys)),]
+  p <- lm(site$nspecies ~ site$Year) %>% summary()  %>% coef() %>% .[2,4]
+  print(p)
+  if(p<=0.05){
+    sig.fits <- append(sig.fits,site$Site[1])
+  }
+}
+
+ggplot(subset(species,Species=="Savannah Sparrow" & Site %in% c("Magnuson","Discovery Park","Genesee")),
+       aes(x=Year,y=freq,col=Site))+
+  facet_wrap(~Site)+ylab("Detections/Survey")+
+  geom_point()+geom_smooth(method=lm)
+
+ggplot(subset(species,Species=="Anna's Hummingbird"),aes(x=Year,y=freq,col=Site))+
+  geom_smooth(method=lm,fill=NA)
+```
+
+##Species Trends Within Years
+```{r}
+#get monthly totals by species/month/park, add n surveys, divide
+sp.months <- ddply(df,.(Site,Month,Species),summarize,total=sum(total))
+monthly.effort <- ddply(df,.(Site,Month),summarize,nsurveys=length(unique(surveyID)))
+sp.months <- join(sp.months,monthly.effort,by=c("Site","Month"),type="left")
+sp.months$freq <- sp.months$total/sp.months$nsurveys
+
+#####################################################################
+##########function to plot species frequency by month/park###########
+#####################################################################
+plotSpeciesMonths <- function(species="Rufous Hummingbird",
+                              parks=levels(factor(sp.months$Site)),
+                              colors=sample(c("forestgreen","cornflowerblue","gold","orangered","violet"))){
+  
+sub <- subset(sp.months,Species %in% species
+              & Site %in% parks)
+
+#this whole chunk just puts in rows for 0 months
+temp <- sub[0,]
+plot.data <- sub[0,]
+for(j in levels(factor(sub$Site))){ #loop over sites
+    site <- subset(sub,Site==j)
+    for(k in levels(factor(sub$Species))){ #loop over species
+      site.sp <- subset(site,Species==k)
+      na.months <- seq(1,12,1)[seq(1,12,1) %in% site.sp$Month==F]
+      
+      if(length(na.months)>=1){ #continue if empty months
+        na.months.nsurveys <- subset(monthly.effort,Site==site.sp$Site[1] & Month %in% na.months) #get na month survey numbers
+        for(i in 1:length(na.months)){                                                            #add rows for na months
+          row <- data.frame(site.sp$Site[1],na.months[i],site.sp$Species[1],0,na.months.nsurveys[i,"nsurveys"],0)
+          names(row) <- names(site.sp)
+          site.sp <- rbind(site.sp,row)
+        }
+      }
+      temp <- rbind(temp,site.sp)
+    }
+    plot.data <- rbind(plot.data,temp)
+    temp <- sub[0,]
+}
+
+ggplot(plot.data,aes(x=Month,y=freq,col=Species,fill=Species))+
+  ylab("Detections/Survey")+
+  scale_color_manual(values=colors)+
+  scale_fill_manual(values=colors)+
+  facet_wrap(~Site,scales="free_x")+
+  scale_x_continuous(breaks=seq(1,12,1),limits=c(1,12))+
+  geom_point()+geom_smooth(alpha=0.15)
+}
+
+
