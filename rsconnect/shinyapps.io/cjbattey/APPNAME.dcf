@@ -2,6 +2,6 @@ name: APPNAME
 account: cjbattey
 server: shinyapps.io
 appId: 124898
-bundleId: 553524
+bundleId: 556623
 url: https://cjbattey.shinyapps.io/APPNAME/
-when: 1473459751.95606
+when: 1473788233.58009
